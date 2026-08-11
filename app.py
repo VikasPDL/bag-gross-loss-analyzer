@@ -12,6 +12,27 @@ from processing import (
     to_excel_bytes,
 )
 
+def stat_card(title, items):
+    stat_html = "".join(
+        f'''
+        <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:150px;">
+            <div style="width:44px;height:44px;border-radius:12px;background:{color};
+                        display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">{icon}</div>
+            <div>
+                <div style="font-size:0.76rem;color:#8A93A6;font-weight:600;">{label}</div>
+                <div style="font-size:1.3rem;font-weight:700;color:#1B2430;">{value}</div>
+            </div>
+        </div>'''
+        for icon, color, label, value in items
+    )
+    return f'''
+    <div style="background:#FFFFFF;border-radius:16px;padding:18px 20px;
+                box-shadow:0 1px 3px rgba(16,24,40,0.06);border:1px solid rgba(15,23,42,0.06);height:100%;">
+        <div style="font-size:0.92rem;font-weight:700;color:#1B2430;margin-bottom:14px;">{title}</div>
+        <div style="display:flex; gap:20px; flex-wrap:wrap;">{stat_html}</div>
+    </div>'''
+
+
 build_gross_loss_report = st.cache_data(show_spinner=False)(build_gross_loss_report)
 build_department_summary = st.cache_data(show_spinner=False)(build_department_summary)
 build_returned_bag_details = st.cache_data(show_spinner=False)(build_returned_bag_details)
@@ -22,31 +43,157 @@ st.set_page_config(
     layout="wide",
 )
 
-CUSTOM_CSS = """
+PAGE_BG = "#E9F1FB"
+
+CUSTOM_CSS = f"""
 <style>
-#MainMenu, footer {visibility: hidden;}
-.block-container {padding-top: 2rem; padding-bottom: 3rem;}
-[data-testid="stMetric"] {
-    background: rgba(48, 84, 150, 0.08);
-    border: 1px solid rgba(48, 84, 150, 0.18);
-    border-radius: 10px;
-    padding: 14px 16px 8px 16px;
-}
-[data-testid="stMetricLabel"] {font-weight: 600;}
-h1 {font-weight: 700;}
-.stTabs [data-baseweb="tab-list"] {gap: 4px;}
+#MainMenu, footer {{visibility: hidden;}}
+
+[data-testid="stAppViewContainer"] {{
+    background: {PAGE_BG};
+}}
+[data-testid="stHeader"] {{
+    background: transparent;
+}}
+
+.block-container {{
+    padding-top: 1.75rem;
+    padding-bottom: 2.5rem;
+    max-width: 1400px;
+    background: #FFFFFF;
+    border-radius: 24px;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+}}
+
+[data-testid="stSidebar"] {{
+    background: #FFFFFF;
+    border-radius: 0 24px 24px 0;
+    margin: 1rem 0 1rem 1rem;
+    box-shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+}}
+[data-testid="stSidebar"] > div:first-child {{
+    padding-top: 1.5rem;
+}}
+
+/* Logo header */
+.app-logo-row {{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 4px;
+}}
+.app-logo-badge {{
+    width: 46px;
+    height: 46px;
+    border-radius: 13px;
+    background: linear-gradient(135deg, #2FB380, #1E9468);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+}}
+.app-logo-title {{
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #1B2430;
+    letter-spacing: -0.01em;
+}}
+
+[data-testid="stCaptionContainer"] {{
+    font-size: 0.95rem !important;
+}}
+
+/* Section headers (st.subheader) */
+h3 {{
+    font-size: 1.2rem !important;
+    font-weight: 600 !important;
+    margin-top: 0.5rem !important;
+}}
+
+/* Sidebar section labels */
+[data-testid="stSidebar"] h2 {{
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6B7280 !important;
+}}
+
+/* Tabs — pill style */
+.stTabs [data-baseweb="tab-list"] {{
+    gap: 4px;
+    border-bottom: none;
+    background: #F1F4F9;
+    border-radius: 12px;
+    padding: 5px;
+}}
+.stTabs [data-baseweb="tab"] {{
+    height: 42px;
+    padding: 0 18px;
+    border-radius: 9px;
+}}
+.stTabs [data-baseweb="tab"] p {{
+    font-size: 0.92rem !important;
+    font-weight: 600 !important;
+    color: #6B7280;
+}}
+.stTabs [aria-selected="true"] {{
+    background-color: #FFFFFF;
+    box-shadow: 0 1px 4px rgba(31, 41, 55, 0.12);
+}}
+.stTabs [aria-selected="true"] p {{
+    color: #1B2430 !important;
+}}
+
+/* Buttons */
+.stDownloadButton button {{
+    border-radius: 999px;
+    font-weight: 600;
+    background: #2FB380;
+    color: white;
+    border: none;
+}}
+.stButton button {{
+    border-radius: 999px;
+    font-weight: 600;
+}}
+
+/* Multiselect pills */
+[data-baseweb="tag"] {{
+    border-radius: 999px !important;
+    background-color: #E6F6EF !important;
+}}
+[data-baseweb="tag"] span {{
+    color: #1E9468 !important;
+}}
+
+/* Labels for inputs/filters */
+[data-testid="stWidgetLabel"] p {{
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    color: #4B5563 !important;
+}}
+
+hr {{margin: 1.25rem 0 !important;}}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-st.title("\U0001F48D Bag Gross Loss % Analyzer")
+st.markdown(
+    '<div class="app-logo-row"><div class="app-logo-badge">\U0001F48D</div>'
+    '<div class="app-logo-title">Bag Gross Loss % Analyzer</div></div>',
+    unsafe_allow_html=True,
+)
 st.caption(
     "Upload the Bag Transaction export to compute Opening / Add Metal / Return Metal / "
     "Loss Metal / Balance and Gross Loss % for every bag, one row per bag."
 )
 
 with st.sidebar:
-    st.header("Upload")
+    st.header("\U0001F4E4 Upload")
     uploaded_files = st.file_uploader(
         "Bag Transaction Excel file(s) (.xlsx)",
         type=["xlsx"],
@@ -54,28 +201,27 @@ with st.sidebar:
         help="Upload one or more series exports (e.g. 25, 26) — they'll be combined into one report.",
     )
     st.divider()
-    st.header("Settings")
-    metal_raw_name = st.selectbox(
-        "Raw Name value treated as Metal",
-        options=["Gold", "TYPE2"],
-        index=0,
-        help="Only rows tagged with this Raw Name are used for Add Metal / Return Metal / Loss Metal.",
-    )
-    mismatch_tolerance = st.number_input(
-        "Balance vs Last Weight tolerance (gm)",
-        min_value=0.0,
-        value=0.001,
-        step=0.001,
-        format="%.3f",
-    )
-    exclude_recast = st.checkbox(
-        "Exclude returned/recast bags",
-        value=True,
-        help="Leaves out bags that went through CAST more than once (melted back and recast) from "
-        "the Report, Category Summary, Department Summary and Charts. They're still listed, by "
-        "category, in the Returned/Recast Bags tab.",
-    )
-    st.divider()
+    with st.expander("\U00002699\U0000FE0F Settings"):
+        metal_raw_name = st.selectbox(
+            "Raw Name value treated as Metal",
+            options=["Gold", "TYPE2"],
+            index=0,
+            help="Only rows tagged with this Raw Name are used for Add Metal / Return Metal / Loss Metal.",
+        )
+        mismatch_tolerance = st.number_input(
+            "Balance vs Last Weight tolerance (gm)",
+            min_value=0.0,
+            value=0.001,
+            step=0.001,
+            format="%.3f",
+        )
+        exclude_recast = st.checkbox(
+            "Exclude returned/recast bags",
+            value=True,
+            help="Leaves out bags that went through CAST more than once (melted back and recast) from "
+            "the Report, Category Summary, Department Summary and Charts. They're still listed, by "
+            "category, in the Returned/Recast Bags tab.",
+        )
     st.caption("Bag No is rebuilt as Year/Bag Type/Bag No, e.g. 26/G/8518.")
 
 if not uploaded_files:
@@ -147,14 +293,48 @@ filtered = df[
 if search_bag:
     filtered = filtered[filtered["Bag No"].str.contains(search_bag, case=False, na=False)]
 
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Bags", f"{len(filtered):,}")
-k2.metric("Total Opening Wt", f"{filtered['Opening Wt'].sum():,.2f} g")
-k3.metric("Total Loss Metal", f"{filtered['Loss Metal'].sum():,.3f} g")
 avg_loss_pct = filtered["Gross Loss %"].mean()
-k4.metric("Avg Gross Loss %", f"{avg_loss_pct:,.2f} %" if pd.notna(avg_loss_pct) else "-")
 mismatch_count = int((filtered["Status"] == "Mismatch").sum())
-k5.metric("Mismatches", f"{mismatch_count:,}", delta=None)
+
+kc1, kc2, kc3 = st.columns(3)
+with kc1:
+    st.markdown(
+        stat_card(
+            "Bag Overview",
+            [
+                ("\U0001F4E6", "#DCEBFF", "Bags", f"{len(filtered):,}"),
+                ("\U000026A0\U0000FE0F", "#FFE3E3", "Mismatches", f"{mismatch_count:,}"),
+            ],
+        ),
+        unsafe_allow_html=True,
+    )
+with kc2:
+    st.markdown(
+        stat_card(
+            "Weight Overview",
+            [
+                ("\U00002696\U0000FE0F", "#FFF1D6", "Total Opening Wt", f"{filtered['Opening Wt'].sum():,.2f} g"),
+                ("\U0001F4C9", "#FFE4CC", "Total Loss Metal", f"{filtered['Loss Metal'].sum():,.3f} g"),
+            ],
+        ),
+        unsafe_allow_html=True,
+    )
+with kc3:
+    st.markdown(
+        stat_card(
+            "Performance",
+            [
+                (
+                    "\U0001F4CA",
+                    "#DFF7EA",
+                    "Avg Gross Loss %",
+                    f"{avg_loss_pct:,.2f} %" if pd.notna(avg_loss_pct) else "-",
+                ),
+            ],
+        ),
+        unsafe_allow_html=True,
+    )
+st.write("")
 
 tab_table, tab_category, tab_bagcount, tab_department, tab_charts = st.tabs(
     [
@@ -266,7 +446,7 @@ with tab_bagcount:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         with count_col2:
-            st.bar_chart(bag_counts.set_index("Category")["Returned/Recast Bags"])
+            st.bar_chart(bag_counts.set_index("Category")["Returned/Recast Bags"], color="#2FB380")
 
         st.divider()
         st.subheader("Bag Numbers")
@@ -320,7 +500,7 @@ with tab_charts:
     with chart_col1:
         st.subheader("Avg Gross Loss % by Category")
         by_cat = filtered.groupby("Category")["Gross Loss %"].mean().sort_values(ascending=False)
-        st.bar_chart(by_cat)
+        st.bar_chart(by_cat, color="#2FB380")
     with chart_col2:
         st.subheader("Gross Loss % Distribution")
         hist_df = filtered["Gross Loss %"].dropna()
@@ -328,10 +508,10 @@ with tab_charts:
             bins = pd.cut(hist_df, bins=10)
             counts = bins.value_counts().sort_index()
             counts.index = counts.index.astype(str)
-            st.bar_chart(counts)
+            st.bar_chart(counts, color="#2FB380")
         else:
             st.caption("No data to chart.")
 
     st.subheader("Loss Metal by Category")
     loss_by_cat = filtered.groupby("Category")["Loss Metal"].sum().sort_values(ascending=False)
-    st.bar_chart(loss_by_cat)
+    st.bar_chart(loss_by_cat, color="#2FB380")
