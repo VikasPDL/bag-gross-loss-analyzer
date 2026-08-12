@@ -267,6 +267,39 @@ def build_department_summary(uploaded_files, metal_raw_name="Gold", exclude_reca
     return summary
 
 
+def build_category_department_summary(uploaded_files, metal_raw_name="Gold", exclude_recast=False) -> pd.DataFrame:
+    all_stage_rows = []
+    for uploaded_file in _as_file_list(uploaded_files):
+        state = _load_workbook_state(uploaded_file, metal_raw_name)
+        recast_bags = _find_returned_recast_bags(state) if exclude_recast else {}
+        all_stage_rows.extend(row for row in state["stage_rows"] if row["Bag No"] not in recast_bags)
+
+    stage_df = pd.DataFrame(all_stage_rows)
+    if stage_df.empty:
+        return stage_df
+
+    summary = (
+        stage_df.groupby(["Category", "Department"], dropna=False)
+        .agg(
+            Bags=("Bag No", "nunique"),
+            **{
+                "Total Opening Wt": ("Opening Wt", "sum"),
+                "Total Add Metal": ("Add Metal", "sum"),
+                "Total Return Metal": ("Return Metal", "sum"),
+                "Total Loss Metal": ("Loss Metal", "sum"),
+                "Total Balance": ("Balance", "sum"),
+            },
+        )
+        .reset_index()
+    )
+    numeric_cols = summary.columns.drop(["Category", "Department", "Bags"])
+    summary[numeric_cols] = summary[numeric_cols].round(3)
+    summary["Gross Loss %"] = (
+        summary["Total Loss Metal"] / summary["Total Balance"].replace(0, pd.NA) * 100
+    ).round(3)
+    return summary.sort_values(["Category", "Total Loss Metal"], ascending=[True, False])
+
+
 def build_category_weight_summary(df: pd.DataFrame) -> pd.DataFrame:
     summary = (
         df.groupby("Category", dropna=False)

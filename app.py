@@ -3,6 +3,7 @@ import streamlit as st
 
 from processing import (
     InvalidWorkbookError,
+    build_category_department_summary,
     build_category_mismatch_summary,
     build_category_weight_summary,
     build_department_summary,
@@ -36,6 +37,7 @@ def stat_card(title, items):
 build_gross_loss_report = st.cache_data(show_spinner=False)(build_gross_loss_report)
 build_department_summary = st.cache_data(show_spinner=False)(build_department_summary)
 build_returned_bag_details = st.cache_data(show_spinner=False)(build_returned_bag_details)
+build_category_department_summary = st.cache_data(show_spinner=False)(build_category_department_summary)
 
 st.set_page_config(
     page_title="Bag Gross Loss % Analyzer",
@@ -336,12 +338,13 @@ with kc3:
     )
 st.write("")
 
-tab_table, tab_category, tab_bagcount, tab_department, tab_charts = st.tabs(
+tab_table, tab_category, tab_bagcount, tab_department, tab_catdept, tab_charts = st.tabs(
     [
         "\U0001F4CB Report",
         "\U0001F5C2️ Category Summary",
         "\U0001F9EE Bags by Category",
         "\U0001F3ED Department Summary",
+        "\U0001F9ED Category & Department",
         "\U0001F4CA Charts",
     ]
 )
@@ -494,6 +497,48 @@ with tab_department:
         file_name="Department Summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+with tab_catdept:
+    st.subheader("Category & Department, together")
+    st.caption("One row per Category + Department, same columns as the bag report.")
+    catdept_detail = build_category_department_summary(
+        uploaded_files, metal_raw_name=metal_raw_name, exclude_recast=exclude_recast
+    )
+
+    if catdept_detail.empty:
+        st.info("No Category/Department data found.")
+    else:
+        catdept_display = catdept_detail[
+            ["Category", "Department", "Total Opening Wt", "Total Add Metal", "Total Return Metal",
+             "Total Loss Metal", "Total Balance", "Gross Loss %"]
+        ].rename(
+            columns={
+                "Total Opening Wt": "Opening Wt",
+                "Total Add Metal": "Add Metal",
+                "Total Return Metal": "Return Metal",
+                "Total Loss Metal": "Loss Metal",
+                "Total Balance": "Balance",
+            }
+        )
+        st.dataframe(
+            catdept_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Gross Loss %": st.column_config.ProgressColumn(
+                    "Gross Loss %",
+                    min_value=0,
+                    max_value=max(float(catdept_display["Gross Loss %"].max() or 1), 1.0),
+                    format="%.2f%%",
+                ),
+            },
+        )
+        st.download_button(
+            "⬇️ Download Category & Department (.xlsx)",
+            data=to_excel_bytes(catdept_display, sheet_name="Category x Department"),
+            file_name="Category x Department.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 with tab_charts:
     chart_col1, chart_col2 = st.columns(2)
