@@ -338,13 +338,14 @@ with kc3:
     )
 st.write("")
 
-tab_table, tab_category, tab_bagcount, tab_department, tab_catdept, tab_charts = st.tabs(
+tab_table, tab_category, tab_bagcount, tab_department, tab_catdept, tab_highloss, tab_charts = st.tabs(
     [
         "\U0001F4CB Report",
         "\U0001F5C2️ Category Summary",
-        "\U0001F9EE Bags by Category",
+        "\U0000267B\U0000FE0F Recast Bags",
         "\U0001F3ED Department Summary",
         "\U0001F9ED Category & Department",
+        "\U0001F6A8 High Loss Bags",
         "\U0001F4CA Charts",
     ]
 )
@@ -430,6 +431,42 @@ with tab_bagcount:
     if bag_counts.empty:
         st.info("No returned/recast bags found.")
     else:
+        total_recast = int(bag_counts["Returned/Recast Bags"].sum())
+        total_bags_seen = len(filtered) + total_recast if exclude_recast else len(filtered)
+        recast_pct = (total_recast / total_bags_seen * 100) if total_bags_seen else 0
+        categories_affected = int((bag_counts["Returned/Recast Bags"] > 0).sum())
+        top_row = bag_counts.iloc[0]
+
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            st.markdown(
+                stat_card(
+                    "Recast Overview",
+                    [
+                        ("\U0000267B\U0000FE0F", "#FFE3E3", "Recast Bags", f"{total_recast:,}"),
+                        ("\U0001F4CA", "#FFF1D6", "% of All Bags", f"{recast_pct:,.2f} %"),
+                    ],
+                ),
+                unsafe_allow_html=True,
+            )
+        with rc2:
+            st.markdown(
+                stat_card(
+                    "Where It's Worst",
+                    [
+                        ("\U0001F5C2\U0000FE0F", "#DCEBFF", "Categories Affected", f"{categories_affected:,}"),
+                        (
+                            "\U0001F947",
+                            "#DFF7EA",
+                            "Top Category",
+                            f"{top_row['Category']} ({int(top_row['Returned/Recast Bags'])})",
+                        ),
+                    ],
+                ),
+                unsafe_allow_html=True,
+            )
+        st.write("")
+
         count_col1, count_col2 = st.columns([1, 1])
         with count_col1:
             st.dataframe(
@@ -465,6 +502,54 @@ with tab_bagcount:
             "⬇️ Download returned/recast bag numbers (.xlsx)",
             data=to_excel_bytes(details_view, sheet_name="Returned Bag Numbers"),
             file_name="Returned Bag Numbers.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.divider()
+        st.subheader("Recast Bags — Category Summary")
+        st.caption("Same table as the Category Summary tab, but scoped to only the recast bags above.")
+        recast_bag_report = build_gross_loss_report(
+            uploaded_files, metal_raw_name=metal_raw_name, mismatch_tolerance=mismatch_tolerance, only_recast=True
+        )
+        recast_weight_summary = build_category_weight_summary(recast_bag_report)
+        st.dataframe(
+            recast_weight_summary,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Avg Gross Loss %": st.column_config.NumberColumn("Avg Gross Loss %", format="%.2f%%"),
+            },
+        )
+        st.download_button(
+            "⬇️ Download recast category summary (.xlsx)",
+            data=to_excel_bytes(recast_weight_summary, sheet_name="Recast Category Summary"),
+            file_name="Recast Category Summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.divider()
+        st.subheader("Recast Bags — Department Summary")
+        st.caption("Same table as the Department Summary tab, but scoped to only the recast bags above.")
+        recast_department_summary = build_department_summary(
+            uploaded_files, metal_raw_name=metal_raw_name, only_recast=True
+        )
+        st.dataframe(
+            recast_department_summary,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Gross Loss %": st.column_config.ProgressColumn(
+                    "Gross Loss %",
+                    min_value=0,
+                    max_value=max(float(recast_department_summary["Gross Loss %"].max() or 1), 1.0),
+                    format="%.2f%%",
+                ),
+            },
+        )
+        st.download_button(
+            "⬇️ Download recast department summary (.xlsx)",
+            data=to_excel_bytes(recast_department_summary, sheet_name="Recast Department Summary"),
+            file_name="Recast Department Summary.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
@@ -537,6 +622,40 @@ with tab_catdept:
             "⬇️ Download Category & Department (.xlsx)",
             data=to_excel_bytes(catdept_display, sheet_name="Category x Department"),
             file_name="Category x Department.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+with tab_highloss:
+    st.subheader("Bags With Unusually High Gross Loss %")
+    st.caption(
+        "Bags above the threshold usually mean the weight chain broke somewhere for that bag "
+        "(e.g. Balance shrank to almost nothing, so Loss ÷ Balance blows up) — not a real loss that "
+        "large. Shows every uploaded bag regardless of the filters above, so nothing gets missed."
+    )
+    threshold = st.number_input("Gross Loss % threshold", min_value=0.0, value=100.0, step=10.0)
+    high_loss = df[df["Gross Loss %"] > threshold].sort_values("Gross Loss %", ascending=False)
+
+    if high_loss.empty:
+        st.success(f"No bags found above {threshold:.0f}% Gross Loss.")
+    else:
+        st.warning(f"⚠️ {len(high_loss)} bag(s) above {threshold:.0f}% Gross Loss.")
+        hl1, hl2, hl3 = st.columns(3)
+        hl1.metric("Bags Above Threshold", f"{len(high_loss):,}")
+        hl2.metric("Highest Gross Loss %", f"{high_loss['Gross Loss %'].max():,.1f} %")
+        hl3.metric("Most Common Status", high_loss["Status"].mode().iat[0])
+
+        st.dataframe(
+            high_loss,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Gross Loss %": st.column_config.NumberColumn("Gross Loss %", format="%.1f%%"),
+            },
+        )
+        st.download_button(
+            "⬇️ Download high loss bags (.xlsx)",
+            data=to_excel_bytes(high_loss, sheet_name="High Loss Bags"),
+            file_name="High Loss Bags.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 

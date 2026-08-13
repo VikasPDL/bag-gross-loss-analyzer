@@ -174,17 +174,20 @@ def _as_file_list(uploaded_files):
     return [uploaded_files]
 
 
-def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tolerance, exclude_recast):
+def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tolerance, exclude_recast, only_recast=False):
     state = _load_workbook_state(uploaded_file, metal_raw_name)
     bag_data = state["bag_data"]
     bag_running_balance = state["bag_running_balance"]
     bag_last_wt = state["bag_last_wt"]
     bag_label = state["bag_label"]
-    recast_bags = _find_returned_recast_bags(state) if exclude_recast else {}
+    recast_bags = _find_returned_recast_bags(state) if (exclude_recast or only_recast) else {}
 
     rows = []
     for bag_no in state["order"]:
-        if bag_no in recast_bags:
+        if only_recast:
+            if bag_no not in recast_bags:
+                continue
+        elif bag_no in recast_bags:
             continue
         d = bag_data[bag_no]
         balance = bag_running_balance[bag_no]
@@ -218,21 +221,28 @@ def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tole
     return rows
 
 
-def build_gross_loss_report(uploaded_files, metal_raw_name="Gold", mismatch_tolerance=0.001, exclude_recast=False):
+def build_gross_loss_report(
+    uploaded_files, metal_raw_name="Gold", mismatch_tolerance=0.001, exclude_recast=False, only_recast=False
+):
     all_rows = []
     for uploaded_file in _as_file_list(uploaded_files):
         all_rows.extend(
-            _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tolerance, exclude_recast)
+            _build_gross_loss_report_single(
+                uploaded_file, metal_raw_name, mismatch_tolerance, exclude_recast, only_recast
+            )
         )
     return pd.DataFrame(all_rows)
 
 
-def build_department_summary(uploaded_files, metal_raw_name="Gold", exclude_recast=False):
+def build_department_summary(uploaded_files, metal_raw_name="Gold", exclude_recast=False, only_recast=False):
     all_stage_rows = []
     for uploaded_file in _as_file_list(uploaded_files):
         state = _load_workbook_state(uploaded_file, metal_raw_name)
-        recast_bags = _find_returned_recast_bags(state) if exclude_recast else {}
-        all_stage_rows.extend(row for row in state["stage_rows"] if row["Bag No"] not in recast_bags)
+        recast_bags = _find_returned_recast_bags(state) if (exclude_recast or only_recast) else {}
+        if only_recast:
+            all_stage_rows.extend(row for row in state["stage_rows"] if row["Bag No"] in recast_bags)
+        else:
+            all_stage_rows.extend(row for row in state["stage_rows"] if row["Bag No"] not in recast_bags)
 
     stage_df = pd.DataFrame(all_stage_rows)
     if stage_df.empty:
@@ -256,7 +266,7 @@ def build_department_summary(uploaded_files, metal_raw_name="Gold", exclude_reca
     numeric_cols = summary.columns.drop(["Department", "Bags", "Entries"])
     summary[numeric_cols] = summary[numeric_cols].round(3)
     summary["Gross Loss %"] = (
-        summary["Total Loss Metal"] / summary["Total Balance"].replace(0, pd.NA) * 100
+        summary["Total Loss Metal"] / summary["Total Balance"].replace(0, float("nan")) * 100
     ).round(3)
     summary = summary.sort_values("Total Loss Metal", ascending=False)
 
@@ -295,7 +305,7 @@ def build_category_department_summary(uploaded_files, metal_raw_name="Gold", exc
     numeric_cols = summary.columns.drop(["Category", "Department", "Bags"])
     summary[numeric_cols] = summary[numeric_cols].round(3)
     summary["Gross Loss %"] = (
-        summary["Total Loss Metal"] / summary["Total Balance"].replace(0, pd.NA) * 100
+        summary["Total Loss Metal"] / summary["Total Balance"].replace(0, float("nan")) * 100
     ).round(3)
     return summary.sort_values(["Category", "Total Loss Metal"], ascending=[True, False])
 
