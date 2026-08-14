@@ -1,7 +1,22 @@
+import re
 from io import BytesIO
 
 import openpyxl
 import pandas as pd
+
+_KARAT_PATTERN = re.compile(r"G(\d{1,2})K", re.IGNORECASE)
+
+
+def _karat_factor(base_metal):
+    if not base_metal:
+        return None
+    match = _KARAT_PATTERN.search(str(base_metal))
+    if not match:
+        return None
+    karat = int(match.group(1))
+    if karat <= 0 or karat > 24:
+        return None
+    return karat / 24
 
 COL = {
     "Year": 7,
@@ -77,7 +92,10 @@ def _load_workbook_state(uploaded_file, metal_raw_name):
     bag_data = {}
     order = []
     bag_running_balance = {}
+    bag_pure_balance = {}
+    bag_karat_factor = {}
     bag_last_wt = {}
+    bag_last_dept = {}
     bag_label = {}
     stage_rows = []
 
@@ -100,6 +118,10 @@ def _load_workbook_state(uploaded_file, metal_raw_name):
         if net_wt_any not in (None, 0):
             bag_last_wt[bag_no] = net_wt_any
 
+        row_department = _cell(row_values, "Department", n)
+        if row_department is not None:
+            bag_last_dept[bag_no] = row_department
+
         raw_name = _cell(row_values, "Raw Name", n)
         if raw_name != metal_raw_name:
             continue
@@ -111,32 +133,71 @@ def _load_workbook_state(uploaded_file, metal_raw_name):
         in_wt = _cell(row_values, "In Wt Gm", n) or 0
         out_wt = _cell(row_values, "Out Wt Gm", n) or 0
 
+        if bag_no not in bag_karat_factor:
+            bag_karat_factor[bag_no] = _karat_factor(_cell(row_values, "Base Metal", n))
+        factor = bag_karat_factor[bag_no]
+
         if bag_no not in bag_data:
             opening = net_wt if net_wt else in_wt
             add_metal = 0.0
             return_metal = round(out_wt, 3)
             loss_metal = round(loss_wt, 3)
             balance = round(opening + add_metal - return_metal - loss_metal, 3)
+            pure_opening = round(opening * factor, 3) if factor is not None else None
+            pure_add_metal = 0.0 if factor is not None else None
+            pure_return_metal = round(return_metal * factor, 3) if factor is not None else None
+            pure_loss_metal = round(loss_metal * factor, 3) if factor is not None else None
+            pure_balance = round(balance * factor, 3) if factor is not None else None
             bag_data[bag_no] = {
                 "Category": category,
+                "Karat": (f"{int(factor * 24)}K" if factor is not None else None),
                 "Opening Wt": round(opening, 3),
                 "GRN Net Wt + Loss Wt": None,
                 "Add Metal": add_metal,
                 "Return Metal": return_metal,
                 "Loss Metal": loss_metal,
+                "Pure Opening Wt": pure_opening,
+                "Pure Add Metal": pure_add_metal,
+                "Pure Return Metal": pure_return_metal,
+                "Pure Loss Metal": pure_loss_metal,
             }
             order.append(bag_no)
         else:
             prev_balance = bag_running_balance[bag_no]
+            prev_pure_balance = bag_pure_balance.get(bag_no)
             opening = prev_balance
             add_metal = round(in_wt, 3)
             return_metal = round(out_wt, 3)
             loss_metal = round(loss_wt, 3)
             balance = round(prev_balance + add_metal - return_metal - loss_metal, 3)
+            pure_opening = prev_pure_balance
+            pure_add_metal = round(add_metal * factor, 3) if factor is not None else None
+            pure_return_metal = round(return_metal * factor, 3) if factor is not None else None
+            pure_loss_metal = round(loss_metal * factor, 3) if factor is not None else None
+            pure_balance = (
+                round(prev_pure_balance + pure_add_metal - pure_return_metal - pure_loss_metal, 3)
+                if factor is not None and prev_pure_balance is not None
+                else None
+            )
             d = bag_data[bag_no]
             d["Add Metal"] = round(d["Add Metal"] + add_metal, 3)
             d["Return Metal"] = round(d["Return Metal"] + return_metal, 3)
             d["Loss Metal"] = round(d["Loss Metal"] + loss_metal, 3)
+            d["Pure Add Metal"] = (
+                round(d["Pure Add Metal"] + pure_add_metal, 3)
+                if d["Pure Add Metal"] is not None and pure_add_metal is not None
+                else None
+            )
+            d["Pure Return Metal"] = (
+                round(d["Pure Return Metal"] + pure_return_metal, 3)
+                if d["Pure Return Metal"] is not None and pure_return_metal is not None
+                else None
+            )
+            d["Pure Loss Metal"] = (
+                round(d["Pure Loss Metal"] + pure_loss_metal, 3)
+                if d["Pure Loss Metal"] is not None and pure_loss_metal is not None
+                else None
+            )
             if category and not d["Category"]:
                 d["Category"] = category
 
@@ -144,6 +205,7 @@ def _load_workbook_state(uploaded_file, metal_raw_name):
             bag_data[bag_no]["GRN Net Wt + Loss Wt"] = round(net_wt + loss_wt, 3)
 
         bag_running_balance[bag_no] = balance
+        bag_pure_balance[bag_no] = pure_balance
 
         stage_rows.append(
             {
@@ -155,6 +217,11 @@ def _load_workbook_state(uploaded_file, metal_raw_name):
                 "Return Metal": return_metal,
                 "Loss Metal": loss_metal,
                 "Balance": balance,
+                "Pure Opening Wt": pure_opening,
+                "Pure Add Metal": pure_add_metal,
+                "Pure Return Metal": pure_return_metal,
+                "Pure Loss Metal": pure_loss_metal,
+                "Pure Balance": pure_balance,
             }
         )
 
@@ -162,7 +229,9 @@ def _load_workbook_state(uploaded_file, metal_raw_name):
         "bag_data": bag_data,
         "order": order,
         "bag_running_balance": bag_running_balance,
+        "bag_pure_balance": bag_pure_balance,
         "bag_last_wt": bag_last_wt,
+        "bag_last_dept": bag_last_dept,
         "bag_label": bag_label,
         "stage_rows": stage_rows,
     }
@@ -178,7 +247,9 @@ def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tole
     state = _load_workbook_state(uploaded_file, metal_raw_name)
     bag_data = state["bag_data"]
     bag_running_balance = state["bag_running_balance"]
+    bag_pure_balance = state["bag_pure_balance"]
     bag_last_wt = state["bag_last_wt"]
+    bag_last_dept = state["bag_last_dept"]
     bag_label = state["bag_label"]
     recast_bags = _find_returned_recast_bags(state) if (exclude_recast or only_recast) else {}
 
@@ -191,8 +262,14 @@ def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tole
             continue
         d = bag_data[bag_no]
         balance = bag_running_balance[bag_no]
+        pure_balance = bag_pure_balance.get(bag_no)
         last_wt = bag_last_wt.get(bag_no)
         gross_loss_pct = round((d["Loss Metal"] / balance) * 100, 3) if balance else None
+        pure_gross_loss_pct = (
+            round((d["Pure Loss Metal"] / pure_balance) * 100, 3)
+            if pure_balance and d["Pure Loss Metal"] is not None
+            else None
+        )
 
         if last_wt is None:
             status = "No Data"
@@ -206,6 +283,7 @@ def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tole
                 "Source File": uploaded_file.name,
                 "Bag No": bag_label[bag_no],
                 "Category": d["Category"],
+                "Karat": d["Karat"],
                 "Opening Wt": d["Opening Wt"],
                 "GRN Net Wt + Loss Wt": d["GRN Net Wt + Loss Wt"],
                 "Add Metal": d["Add Metal"],
@@ -213,7 +291,14 @@ def _build_gross_loss_report_single(uploaded_file, metal_raw_name, mismatch_tole
                 "Loss Metal": d["Loss Metal"],
                 "Balance": balance,
                 "Last Weight": last_wt,
+                "Last Department": bag_last_dept.get(bag_no),
                 "Gross Loss %": gross_loss_pct,
+                "Pure Opening Wt": d["Pure Opening Wt"],
+                "Pure Add Metal": d["Pure Add Metal"],
+                "Pure Return Metal": d["Pure Return Metal"],
+                "Pure Loss Metal": d["Pure Loss Metal"],
+                "Pure Balance": pure_balance,
+                "Pure Gross Loss %": pure_gross_loss_pct,
                 "Status": status,
             }
         )
@@ -277,6 +362,50 @@ def build_department_summary(uploaded_files, metal_raw_name="Gold", exclude_reca
     return summary
 
 
+def build_pure_department_summary(uploaded_files, metal_raw_name="Gold", exclude_recast=False, only_recast=False):
+    all_stage_rows = []
+    for uploaded_file in _as_file_list(uploaded_files):
+        state = _load_workbook_state(uploaded_file, metal_raw_name)
+        recast_bags = _find_returned_recast_bags(state) if (exclude_recast or only_recast) else {}
+        if only_recast:
+            all_stage_rows.extend(row for row in state["stage_rows"] if row["Bag No"] in recast_bags)
+        else:
+            all_stage_rows.extend(row for row in state["stage_rows"] if row["Bag No"] not in recast_bags)
+
+    stage_df = pd.DataFrame(all_stage_rows)
+    stage_df = stage_df.dropna(subset=["Pure Balance"]) if not stage_df.empty else stage_df
+    if stage_df.empty:
+        return stage_df
+
+    summary = (
+        stage_df.groupby("Department", dropna=False)
+        .agg(
+            Bags=("Bag No", "nunique"),
+            Entries=("Bag No", "count"),
+            **{
+                "Total Opening Wt": ("Pure Opening Wt", "sum"),
+                "Total Add Metal": ("Pure Add Metal", "sum"),
+                "Total Return Metal": ("Pure Return Metal", "sum"),
+                "Total Loss Metal": ("Pure Loss Metal", "sum"),
+                "Total Balance": ("Pure Balance", "sum"),
+            },
+        )
+        .reset_index()
+    )
+    numeric_cols = summary.columns.drop(["Department", "Bags", "Entries"])
+    summary[numeric_cols] = summary[numeric_cols].round(3)
+    summary["Gross Loss %"] = (
+        summary["Total Loss Metal"] / summary["Total Balance"].replace(0, float("nan")) * 100
+    ).round(3)
+    summary = summary.sort_values("Total Loss Metal", ascending=False)
+
+    total_row = {col: None for col in summary.columns}
+    total_row["Department"] = "TOTAL (sum of %)"
+    total_row["Gross Loss %"] = round(summary["Gross Loss %"].sum(), 3)
+    summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+    return summary
+
+
 def build_category_department_summary(uploaded_files, metal_raw_name="Gold", exclude_recast=False) -> pd.DataFrame:
     all_stage_rows = []
     for uploaded_file in _as_file_list(uploaded_files):
@@ -322,6 +451,36 @@ def build_category_weight_summary(df: pd.DataFrame) -> pd.DataFrame:
                 "Total Loss Metal": ("Loss Metal", "sum"),
                 "Total Balance": ("Balance", "sum"),
                 "Avg Gross Loss %": ("Gross Loss %", "mean"),
+            },
+        )
+        .reset_index()
+        .sort_values("Total Loss Metal", ascending=False)
+    )
+    numeric_cols = summary.columns.drop(["Category", "Bags"])
+    summary[numeric_cols] = summary[numeric_cols].round(3)
+
+    total_row = {col: None for col in summary.columns}
+    total_row["Category"] = "TOTAL (by bag count)"
+    total_row["Bags"] = int(summary["Bags"].sum())
+    total_row["Avg Gross Loss %"] = round(
+        (summary["Avg Gross Loss %"] * summary["Bags"]).sum() / summary["Bags"].sum(), 3
+    )
+    summary = pd.concat([summary, pd.DataFrame([total_row])], ignore_index=True)
+    return summary
+
+
+def build_pure_category_summary(df: pd.DataFrame) -> pd.DataFrame:
+    summary = (
+        df.groupby("Category", dropna=False)
+        .agg(
+            Bags=("Bag No", "count"),
+            **{
+                "Total Opening Wt": ("Pure Opening Wt", "sum"),
+                "Total Add Metal": ("Pure Add Metal", "sum"),
+                "Total Return Metal": ("Pure Return Metal", "sum"),
+                "Total Loss Metal": ("Pure Loss Metal", "sum"),
+                "Total Balance": ("Pure Balance", "sum"),
+                "Avg Gross Loss %": ("Pure Gross Loss %", "mean"),
             },
         )
         .reset_index()

@@ -8,6 +8,8 @@ from processing import (
     build_category_weight_summary,
     build_department_summary,
     build_gross_loss_report,
+    build_pure_category_summary,
+    build_pure_department_summary,
     build_returned_bag_category_counts,
     build_returned_bag_details,
     to_excel_bytes,
@@ -38,6 +40,7 @@ build_gross_loss_report = st.cache_data(show_spinner=False)(build_gross_loss_rep
 build_department_summary = st.cache_data(show_spinner=False)(build_department_summary)
 build_returned_bag_details = st.cache_data(show_spinner=False)(build_returned_bag_details)
 build_category_department_summary = st.cache_data(show_spinner=False)(build_category_department_summary)
+build_pure_department_summary = st.cache_data(show_spinner=False)(build_pure_department_summary)
 
 st.set_page_config(
     page_title="Bag Gross Loss % Analyzer",
@@ -274,17 +277,14 @@ if len(duplicate_bags) > 0:
     )
 
 categories = sorted([c for c in df["Category"].dropna().unique()])
-col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 2, 3])
-with col_f1:
+file_options = sorted(df["Source File"].unique())
+
+with st.popover("\U0001F50D Filters", use_container_width=False):
     selected_categories = st.multiselect("Filter by Category", categories, default=categories)
-with col_f2:
     status_filter = st.multiselect(
         "Filter by Status", ["OK", "Mismatch", "No Data"], default=["OK", "Mismatch", "No Data"]
     )
-with col_f3:
-    file_options = sorted(df["Source File"].unique())
     selected_files = st.multiselect("Filter by Source File", file_options, default=file_options)
-with col_f4:
     search_bag = st.text_input("Search Bag No", placeholder="e.g. 8518")
 
 filtered = df[
@@ -338,13 +338,14 @@ with kc3:
     )
 st.write("")
 
-tab_table, tab_category, tab_bagcount, tab_department, tab_catdept, tab_highloss, tab_charts = st.tabs(
+tab_table, tab_category, tab_bagcount, tab_department, tab_catdept, tab_pure, tab_highloss, tab_charts = st.tabs(
     [
         "\U0001F4CB Report",
         "\U0001F5C2️ Category Summary",
         "\U0000267B\U0000FE0F Recast Bags",
         "\U0001F3ED Department Summary",
         "\U0001F9ED Category & Department",
+        "\U0001F48E Pure Weight",
         "\U0001F6A8 High Loss Bags",
         "\U0001F4CA Charts",
     ]
@@ -379,6 +380,42 @@ with tab_table:
 with tab_category:
     weight_summary = build_category_weight_summary(filtered)
     mismatch_summary = build_category_mismatch_summary(filtered)
+
+    cat_rows = weight_summary[weight_summary["Category"] != "TOTAL (by bag count)"]
+    top_loss_cat = cat_rows.loc[cat_rows["Avg Gross Loss %"].idxmax()] if not cat_rows.empty else None
+    total_mismatch = int(mismatch_summary["Mismatch"].sum())
+
+    oc1, oc2 = st.columns(2)
+    with oc1:
+        st.markdown(
+            stat_card(
+                "Category Overview",
+                [
+                    ("\U0001F5C2\U0000FE0F", "#DCEBFF", "Categories", f"{len(cat_rows):,}"),
+                    ("\U0001F4E6", "#FFF1D6", "Total Bags", f"{int(cat_rows['Bags'].sum()):,}"),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    with oc2:
+        st.markdown(
+            stat_card(
+                "Where It's Worst",
+                [
+                    (
+                        "\U0001F947",
+                        "#DFF7EA",
+                        "Top Loss Category",
+                        f"{top_loss_cat['Category']} ({top_loss_cat['Avg Gross Loss %']:.2f}%)"
+                        if top_loss_cat is not None
+                        else "—",
+                    ),
+                    ("\U000026A0\U0000FE0F", "#FFE3E3", "Total Mismatches", f"{total_mismatch:,}"),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    st.write("")
 
     st.subheader("Weight Summary by Category")
     st.dataframe(
@@ -563,8 +600,80 @@ with tab_department:
     department_summary = build_department_summary(
         uploaded_files, metal_raw_name=metal_raw_name, exclude_recast=exclude_recast
     )
+
+    dept_rows = department_summary[~department_summary["Department"].str.startswith("TOTAL")]
+    top_loss_dept = dept_rows.loc[dept_rows["Gross Loss %"].idxmax()] if not dept_rows.empty else None
+
+    reached_fg = df["Last Department"] == "FG"
+    fg_count = int(reached_fg.sum())
+    fg_pct = (fg_count / len(df) * 100) if len(df) else 0
+    fg_final_weight = df.loc[reached_fg, "Last Weight"].sum()
+
+    doc1, doc2, doc3 = st.columns(3)
+    with doc1:
+        st.markdown(
+            stat_card(
+                "Department Overview",
+                [
+                    ("\U0001F3ED", "#DCEBFF", "Departments", f"{len(dept_rows):,}"),
+                    ("\U0001F4C9", "#FFE4CC", "Total Loss Metal", f"{dept_rows['Total Loss Metal'].sum():,.3f} g"),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    with doc2:
+        st.markdown(
+            stat_card(
+                "Where It's Worst",
+                [
+                    (
+                        "\U0001F947",
+                        "#DFF7EA",
+                        "Top Loss Department",
+                        f"{top_loss_dept['Department']} ({top_loss_dept['Gross Loss %']:.2f}%)"
+                        if top_loss_dept is not None
+                        else "—",
+                    ),
+                    (
+                        "\U0001F4CA",
+                        "#FFF1D6",
+                        "TOTAL (sum of %)",
+                        f"{department_summary['Gross Loss %'].iloc[-1]:.2f} %",
+                    ),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    with doc3:
+        st.markdown(
+            stat_card(
+                "Final Check",
+                [
+                    ("\U00002705", "#DFF7EA", "Bags Reaching FG", f"{fg_count:,} ({fg_pct:.1f}%)"),
+                    ("\U0001F3C1", "#DCEBFF", "Total Final Weight", f"{fg_final_weight:,.2f} g"),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    st.caption(
+        "Final Check uses the Last Weight recorded at FG (Finished Goods) for each bag — the source "
+        "system's own final number — rather than the calculated Balance above, since FG has no metal "
+        "weighing entry of its own to feed into that chain."
+    )
+    st.write("")
+
+    fg_row = {col: None for col in department_summary.columns}
+    fg_row["Department"] = "FG"
+    fg_row["Bags"] = fg_count
+    fg_row["Total Opening Wt"] = round(fg_final_weight, 3)
+    fg_row["Total Balance"] = round(fg_final_weight, 3)
+    department_summary_with_fg = pd.concat(
+        [department_summary.iloc[:-1], pd.DataFrame([fg_row]), department_summary.iloc[-1:]],
+        ignore_index=True,
+    )
+
     st.dataframe(
-        department_summary,
+        department_summary_with_fg,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -578,7 +687,7 @@ with tab_department:
     )
     st.download_button(
         "⬇️ Download department summary (.xlsx)",
-        data=to_excel_bytes(department_summary, sheet_name="Department Summary"),
+        data=to_excel_bytes(department_summary_with_fg, sheet_name="Department Summary"),
         file_name="Department Summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
@@ -605,6 +714,43 @@ with tab_catdept:
                 "Total Balance": "Balance",
             }
         )
+
+        top_combo = catdept_display.loc[catdept_display["Gross Loss %"].idxmax()]
+        cd1, cd2 = st.columns(2)
+        with cd1:
+            st.markdown(
+                stat_card(
+                    "Combination Overview",
+                    [
+                        ("\U0001F9ED", "#DCEBFF", "Combinations", f"{len(catdept_display):,}"),
+                        (
+                            "\U0001F5C2\U0000FE0F",
+                            "#FFF1D6",
+                            "Categories",
+                            f"{catdept_display['Category'].nunique():,}",
+                        ),
+                    ],
+                ),
+                unsafe_allow_html=True,
+            )
+        with cd2:
+            st.markdown(
+                stat_card(
+                    "Where It's Worst",
+                    [
+                        (
+                            "\U0001F947",
+                            "#DFF7EA",
+                            "Worst Combination",
+                            f"{top_combo['Category']} / {top_combo['Department']} ({top_combo['Gross Loss %']:.2f}%)",
+                        ),
+                        ("\U0001F3ED", "#FFE3E3", "Departments", f"{catdept_display['Department'].nunique():,}"),
+                    ],
+                ),
+                unsafe_allow_html=True,
+            )
+        st.write("")
+
         st.dataframe(
             catdept_display,
             use_container_width=True,
@@ -625,6 +771,135 @@ with tab_catdept:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+with tab_pure:
+    st.subheader("Pure Weight Overview")
+    st.caption(
+        "Net weight converted to pure gold weight using each bag's Karat (from Base Metal, e.g. G14K, "
+        "G10K) — Pure Wt = Net Wt × Karat / 24. Same columns as everywhere else, just in pure gold terms."
+    )
+
+    unknown_karat = filtered["Pure Balance"].isna().sum()
+    if unknown_karat:
+        st.warning(
+            f"⚠️ {unknown_karat} bag(s) have a Base Metal value that couldn't be read as a Karat "
+            "(e.g. blank or an unrecognized code) — excluded from the totals below."
+        )
+
+    pure_filtered = filtered.dropna(subset=["Pure Balance"])
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        st.markdown(
+            stat_card(
+                "Pure Weight Overview",
+                [
+                    ("\U0001F48E", "#DCEBFF", "Total Pure Opening Wt", f"{pure_filtered['Pure Opening Wt'].sum():,.2f} g"),
+                    ("\U0001F4C9", "#FFE4CC", "Total Pure Loss Metal", f"{pure_filtered['Pure Loss Metal'].sum():,.3f} g"),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    with pc2:
+        avg_pure_loss = pure_filtered["Pure Gross Loss %"].mean()
+        st.markdown(
+            stat_card(
+                "Performance",
+                [
+                    (
+                        "\U0001F4CA",
+                        "#DFF7EA",
+                        "Avg Pure Gross Loss %",
+                        f"{avg_pure_loss:,.2f} %" if pd.notna(avg_pure_loss) else "—",
+                    ),
+                    ("\U0001F9EA", "#FFF1D6", "Bags Converted", f"{len(pure_filtered):,}"),
+                ],
+            ),
+            unsafe_allow_html=True,
+        )
+    st.write("")
+
+    st.subheader("Pure Weight — Category Table")
+    pure_category_summary = build_pure_category_summary(pure_filtered)
+    st.dataframe(
+        pure_category_summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Avg Gross Loss %": st.column_config.NumberColumn("Avg Gross Loss %", format="%.2f%%"),
+        },
+    )
+    st.download_button(
+        "⬇️ Download Pure Weight category table (.xlsx)",
+        data=to_excel_bytes(pure_category_summary, sheet_name="Pure Weight Category"),
+        file_name="Pure Weight Category.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.divider()
+
+    st.subheader("Pure Weight — Department Table")
+    pure_department_summary = build_pure_department_summary(
+        uploaded_files, metal_raw_name=metal_raw_name, exclude_recast=exclude_recast
+    )
+    st.dataframe(
+        pure_department_summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Gross Loss %": st.column_config.ProgressColumn(
+                "Gross Loss %",
+                min_value=0,
+                max_value=max(float(pure_department_summary["Gross Loss %"].max() or 1), 1.0),
+                format="%.2f%%",
+            ),
+        },
+    )
+    st.download_button(
+        "⬇️ Download Pure Weight department table (.xlsx)",
+        data=to_excel_bytes(pure_department_summary, sheet_name="Pure Weight Department"),
+        file_name="Pure Weight Department.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.divider()
+
+    st.subheader("Pure Weight — Bag-wise Detail")
+    pure_detail = pure_filtered[
+        [
+            "Source File", "Bag No", "Category", "Karat",
+            "Pure Opening Wt", "Pure Add Metal", "Pure Return Metal", "Pure Loss Metal",
+            "Pure Balance", "Pure Gross Loss %", "Status",
+        ]
+    ].rename(
+        columns={
+            "Pure Opening Wt": "Opening Wt",
+            "Pure Add Metal": "Add Metal",
+            "Pure Return Metal": "Return Metal",
+            "Pure Loss Metal": "Loss Metal",
+            "Pure Balance": "Balance",
+            "Pure Gross Loss %": "Gross Loss %",
+        }
+    )
+    st.dataframe(
+        pure_detail,
+        use_container_width=True,
+        hide_index=True,
+        height=460,
+        column_config={
+            "Gross Loss %": st.column_config.ProgressColumn(
+                "Gross Loss %",
+                min_value=0,
+                max_value=max(float(pure_detail["Gross Loss %"].max() or 1), 1.0),
+                format="%.2f%%",
+            ),
+        },
+    )
+    st.download_button(
+        "⬇️ Download Pure Weight bag-wise detail (.xlsx)",
+        data=to_excel_bytes(pure_detail, sheet_name="Pure Weight Detail"),
+        file_name="Pure Weight Detail.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
 with tab_highloss:
     st.subheader("Bags With Unusually High Gross Loss %")
     st.caption(
@@ -639,10 +914,36 @@ with tab_highloss:
         st.success(f"No bags found above {threshold:.0f}% Gross Loss.")
     else:
         st.warning(f"⚠️ {len(high_loss)} bag(s) above {threshold:.0f}% Gross Loss.")
-        hl1, hl2, hl3 = st.columns(3)
-        hl1.metric("Bags Above Threshold", f"{len(high_loss):,}")
-        hl2.metric("Highest Gross Loss %", f"{high_loss['Gross Loss %'].max():,.1f} %")
-        hl3.metric("Most Common Status", high_loss["Status"].mode().iat[0])
+
+        hl1, hl2 = st.columns(2)
+        with hl1:
+            st.markdown(
+                stat_card(
+                    "Outlier Overview",
+                    [
+                        ("\U0001F6A8", "#FFE3E3", "Bags Above Threshold", f"{len(high_loss):,}"),
+                        ("\U0001F4C8", "#FFF1D6", "Highest Gross Loss %", f"{high_loss['Gross Loss %'].max():,.1f} %"),
+                    ],
+                ),
+                unsafe_allow_html=True,
+            )
+        with hl2:
+            st.markdown(
+                stat_card(
+                    "Where It's Worst",
+                    [
+                        (
+                            "\U0001F5C2\U0000FE0F",
+                            "#DCEBFF",
+                            "Top Category",
+                            high_loss["Category"].mode().iat[0],
+                        ),
+                        ("\U00002139\U0000FE0F", "#DFF7EA", "Most Common Status", high_loss["Status"].mode().iat[0]),
+                    ],
+                ),
+                unsafe_allow_html=True,
+            )
+        st.write("")
 
         st.dataframe(
             high_loss,
